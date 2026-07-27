@@ -13,51 +13,91 @@ Explain decisions, not syntax.
 
 ## Current state
 
-Built and passing, but **never yet run against real data**. Everything was
-developed and verified against synthetic fixtures (`tests/make_fixtures.py`).
+The local pipeline (discover/ingest/transform/report) is built, passing 15
+tests against synthetic fixtures, and **has now been run once against the
+real export** (`fitbit discover` only, on 2026-07-27). Ingest/transform/report
+have not yet been run on real data — do that next, but expect it to need
+parser work first (see below).
 
 - 15 tests passing, `ruff check src tests` clean
-- Pipeline verified end to end: 270 synthetic days, 24 silver tables, 62 gold columns
-- 22 `DatasetSpec`s registered in `discover.py`
+- Pipeline verified end to end on synthetic fixtures: 270 days, 24 silver
+  tables, 62 gold columns
+- 22 `DatasetSpec`s registered in `discover.py`, all matching against the old
+  "Global Export Data" file layout only
 
-The single largest open risk: the real export almost certainly contains file
-shapes the parsers have not seen. This is expected and designed for, not a bug.
+Real export stats from `fitbit discover` (`data/catalog.parquet`): 1,082
+files, 1,444.7 MB, under `data_raw/Takeout/Google Health/` (gitignored,
+unzipped from `~/Downloads/takeout-20260727T111240Z-1-001.zip`). 293 files
+matched a known `DatasetSpec`; **789 are unclassified**.
+
+## The real export uses a different, newer layout than this pipeline was built for
+
+Fitbit's export is now branded **"Google Health"**, not "Fitbit", and ships
+two overlapping data trees:
+
+1. `Global Export Data/` — the old layout, still present, still what the 22
+   existing `DatasetSpec`s match. This is why discovery finds real data at
+   all.
+2. `Physical Activity_GoogleData/` (311 files, 96MB) and
+   `Health Fitness Data_GoogleData/` (89 files, 1.19GB) — a **new, richer**
+   per-source CSV format, one file per dataset per day, columns like
+   `timestamp, <value>, data source`. `data source` is the device/app that
+   wrote the row — the Fitbit Air shows up as **"Radiance"** (its internal
+   codename), vs. `"Fitbit App"` for manually-entered or phone-derived data.
+   This is genuinely a superset of the old format: it includes GPS location,
+   micro-motion, swim lengths, cardio load, live pace, and speed, none of
+   which the old format carries. See the full unique dataset-name list by
+   running the `top2` groupby in the discovery session transcript, or just
+   `ls "data_raw/Takeout/Google Health/Physical Activity_GoogleData" | sed -E
+   's/_[0-9]{4}-[0-9]{2}-[0-9]{2}\.csv$//' | sort -u`.
+
+`Biometrics/` (231 files, ~0MB total) is template/placeholder CSVs Fitbit
+generates regardless of whether you use the feature (e.g. `Glucose
+200706.csv` with header only) — noise, not signal. Add a pattern to
+`IGNORE_PATTERNS` rather than a `DatasetSpec`.
+
+`UserActivityProbabilities_*.csv` (in `Health Fitness Data_GoogleData/`) is
+~45MB **per day** — sub-2-second-cadence activity-classification
+probabilities. This is the intraday-aggregation problem `intraday.py` already
+solves for heart rate/steps, applied to a new, much higher-volume source.
+Needs the same treatment: downsample on read, never persist raw.
+
+`gps_location_*.csv` contains real lat/lon/altitude. Flagged in README as
+needing an explicit privacy decision before any cloud sync touches it — do
+not add this to a default sync path without that decision being made first.
 
 ## Immediate next step
 
-```bash
-fitbit discover
-```
+Extend `discover.py`'s `DATASET_SPECS` to also match the
+`Physical Activity_GoogleData` / `Health Fitness Data_GoogleData` filename
+shape (`<dataset_name>_<date>.csv` or `<dataset_name>.csv` for
+non-daily-partitioned ones like `weight.csv`, `height.csv`,
+`daily_readiness.csv`). These files have consistent, self-describing headers
+(see samples above) which makes them easier to parse than the old CSV
+exports' drifting column names — likely a single generic parser keyed off the
+filename-derived dataset name, rather than one bespoke parser per dataset.
 
-Run this against the real Takeout before anything else. It prints an
-unclassified-file report. Work through that list:
+Then re-run `fitbit discover` to confirm the unclassified count drops, add
+`IGNORE_PATTERNS` for `Biometrics/`-style placeholder noise, and only then
+move on to `fitbit ingest`.
 
-- Genuinely useful file → add a `DatasetSpec` to `DATASET_SPECS` in
-  `discover.py`, write or extend a parser, register it in `ingest.py`, and add
-  it to `DAILY_TABLES` in `transform.py` if it is daily-grain.
-- Noise (badges, social, profile) → add to `IGNORE_PATTERNS`.
-
-Then `fitbit ingest`. When a CSV parser matches no known columns it prints the
-real column names it saw — feed those into `VALUE_ALIASES` in
-`parsers/csv_features.py`.
-
-Set `intraday_file_limit: 20` in `config.local.yaml` for the first pass. The
-real export is ~266 MB and mostly minute-grain heart rate; get the shape right
-on a subset before parsing all of it.
+Set `intraday_file_limit: 20` in `config.local.yaml` while iterating —
+already set in `config.local.yaml` (gitignored, present locally).
 
 ## Known unknowns about the real data
 
-- Device is a **Fitbit Air**. Its exact feature set is unconfirmed — whether it
-  writes HRV, SpO2, skin temperature, readiness or stress scores is not yet
-  known. Parsers exist for all of these and will simply produce nothing if the
-  files are absent.
-- Export vintage is 2026-07. Column names in the CSV feature exports drift
-  between vintages; `VALUE_ALIASES` uses alias lists plus substring fallback
-  for this reason.
-- Timezone handling is deliberately minimal. Global Export Data timestamps are
-  device-local; the `timezone` config value is currently unused beyond
-  documentation. If daylight-saving artifacts show up in `midpoint_hour`, that
-  is the place to look.
+- Device is a **Fitbit Air**, confirmed as `data source: Radiance` in the new
+  CSV format. It does write HRV, SpO2, temperature, and readiness data — all
+  present in the real export.
+- Export vintage is 2026-07, in the new "Google Health" format. Column names
+  in the old-format CSV feature exports (`csv_features.py`,
+  `VALUE_ALIASES`) have not yet been checked against real files — do that
+  when running `fitbit ingest` for the first time.
+- Timezone handling is deliberately minimal. New-format timestamps are UTC
+  ISO 8601 with no offset column on most files (an exception:
+  `UserActivityProbabilities` includes `utc_offset`). Old-format Global
+  Export Data timestamps are device-local. These two conventions will need to
+  be reconciled explicitly when both feed the same `daily_facts` table.
 
 ## Conventions
 
