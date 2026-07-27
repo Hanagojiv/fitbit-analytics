@@ -122,6 +122,43 @@ live against the real account this session.
 - Reconciling this data with the Takeout-sourced `gh_*` gold columns --
   same open question as the two Takeout formats, now with a third source.
 
+## Postgres warehouse + dbt (Supabase)
+
+Live and validated. `secrets.local.yaml`'s `postgres.connection_string`
+points at a Supabase project (direct connection, `db.<ref>.supabase.co` --
+switch to the session pooler string if this ever fails from a network
+without good IPv6, e.g. GitHub Actions runners, untested there yet).
+
+- `fitbit warehouse-load` pushes all 68 silver parquet tables to `raw.*`
+  plus the local `data/gold/daily_facts.parquet` to `gold.daily_facts`
+  (full-refresh every run).
+- `dbt/` has 44 staging models (thin passthroughs) and one real mart,
+  `dbt_marts.fct_daily_facts` -- a dynamic 44-way collision-safe join built
+  via `adapter.get_columns_in_relation()`, mirroring `transform.py`'s
+  `build_daily_facts`. **Validated 2026-07-27**: 117 columns × 60 days,
+  cross-checked row-for-row against the local parquet gold table, matched
+  exactly. `dbt test` passes.
+- Supabase's Table Editor only shows the `public` schema by default --
+  everything here lives in `raw`/`gold`/`dbt_staging`/`dbt_marts`, need the
+  schema dropdown switched to see them. Cost the user a "why can't I see my
+  tables" moment; worth remembering if this comes up again.
+- `raw.readiness` never gets created (old-format readiness absent from this
+  export -- see "Live sync" section above), which broke the first `dbt run`
+  until `stg_readiness.sql` was removed. Not a bug, a real data gap.
+- Open decision, not yet made: `gold.daily_facts` (raw parquet upload) and
+  `dbt_marts.fct_daily_facts` (dbt's own computation) currently both exist
+  with the same data. The dashboard should read one of them, and it should
+  probably be `dbt_marts.fct_daily_facts` since that's the one with tests
+  and a rebuildable lineage -- but `gold.*` hasn't been removed in case
+  that's wrong. Decide before wiring up the dashboard.
+- macOS's python.org build needs `SSL_CERT_FILE` set to certifi's bundle
+  for `pip install` itself to work, not just this project's own HTTPS
+  calls -- same root cause as the OAuth token exchange issue, different
+  symptom. Export it before any `pip install` on this machine:
+  `export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")`.
+  (Only works once certifi is already installed somewhere `python3` can
+  import it from -- chicken-and-egg on a completely fresh environment.)
+
 ## The real export uses a different, newer layout than this pipeline was built for
 
 Fitbit's export is now branded **"Google Health"**, not "Fitbit", and ships

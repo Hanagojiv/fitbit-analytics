@@ -26,7 +26,6 @@ sources:
       - name: temperature_computed
       - name: sleep_score
       - name: stress_score
-      - name: readiness
       - name: azm
       - name: vo2max
       - name: hr_zone_minutes

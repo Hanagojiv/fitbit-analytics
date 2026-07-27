@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: fct_daily_facts
+    description: >
+      One row per calendar day on a continuous spine (see
+      macros/daily_facts.sql), every daily-grain source left-joined in.
+      Mirrors transform.build_daily_facts in the local Python pipeline;
+      cross-checked against data/gold/daily_facts.parquet row-for-row on
+      2026-07-27 and matched exactly.
+    columns:
+      - name: date
+        description: Calendar date, continuous even where all sources are null.
+        tests:
+          - not_null
+          - unique

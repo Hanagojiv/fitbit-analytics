@@ -42,8 +42,18 @@ def _table_name(path: Path) -> str:
     return path.stem
 
 
+def _with_psycopg_dialect(pg_url: str) -> str:
+    """Supabase/most tools hand out plain postgresql:// URLs, which makes
+    SQLAlchemy default to psycopg2. This project installs psycopg3
+    instead, so the dialect needs to be explicit rather than requiring
+    every stored connection string to remember `+psycopg` itself."""
+    if pg_url.startswith("postgresql://"):
+        return pg_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return pg_url
+
+
 def load_raw(cfg: Config, pg_url: str) -> dict[str, int]:
-    engine = sqlalchemy.create_engine(pg_url)
+    engine = sqlalchemy.create_engine(_with_psycopg_dialect(pg_url))
     counts: dict[str, int] = {}
 
     with engine.begin() as conn:
