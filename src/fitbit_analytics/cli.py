@@ -5,6 +5,7 @@
     fitbit transform    build gold/daily_facts
     fitbit report       render the HTML report
     fitbit all          run the four in order
+    fitbit sync-auth     one-time Google Health API OAuth authorization
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from . import discover, ingest, report, transform
 from .config import load_config
+from .sync import auth as sync_auth
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,7 +31,15 @@ def main(argv: list[str] | None = None) -> int:
     p_report = sub.add_parser("report")
     p_report.add_argument("-o", "--out", type=Path, default=None)
 
+    sub.add_parser("sync-auth")
+
     args = parser.parse_args(argv)
+
+    if args.command == "sync-auth":
+        client = sync_auth.load_oauth_client()
+        sync_auth.authorize(client)
+        return 0
+
     cfg = load_config(args.config)
 
     if args.command == "discover":

@@ -20,5 +20,9 @@ reports/
 # Local config that may contain paths to personal data
 config.local.yaml
 
+# Google Health API OAuth client secret + token cache — never commit.
+secrets.local.yaml
+.google_health_token.json
+
 # OS
 .DS_Store

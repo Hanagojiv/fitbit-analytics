@@ -36,6 +36,92 @@ Real export: 1,082 files, 1,444.7 MB, under
 `data_raw/Takeout/Google Health/` (gitignored, unzipped from
 `~/Downloads/takeout-20260727T111240Z-1-001.zip`).
 
+## Live sync: the Fitbit Web API is gone, replaced by the Google Health API
+
+Google is decommissioning the legacy Fitbit Web API in September 2026.
+Everything going forward is `health.googleapis.com/v4`, authenticated with
+standard Google OAuth 2.0 -- old Fitbit developer tokens don't transfer.
+`src/fitbit_analytics/sync/` is the client for this, built and validated
+live against the real account this session.
+
+### OAuth setup, and what actually broke
+
+- The Google Cloud project (`My First Project`) is under a Workspace
+  account. Its OAuth consent screen was first set to **Internal**, which
+  restricts authorization to accounts in that same Workspace org. The
+  user's real Fitbit/Google Health data lives on a **personal Gmail
+  account** (`vivekbhanagoji@gmail.com`), a different org entirely -- this
+  failed hard with `Error 403: org_internal` on first attempt. Fixed by
+  switching User type to **External**, which puts it in **Testing** status
+  automatically; added the personal Gmail as a test user.
+- Restricted-scope review (Google's slow third-party security assessment)
+  is only required past **100 users** OR to move an app out of Testing to
+  production. A single-user Testing-status app needs neither, regardless of
+  scope sensitivity.
+- **Testing-status apps get refresh tokens that expire in 7 days**
+  (`refresh_token_expires_in: 604799` in the token response) -- this is a
+  hard Google restriction on unverified apps, not a bug. Decided (with
+  user): stay in Testing, re-run `fitbit sync-auth` manually about weekly
+  rather than pursue verification for a single-user project. Any scheduled
+  sync job must fail loudly on an expired refresh token, not retry
+  silently, so this doesn't turn into a quiet week-long data gap.
+- macOS's python.org build doesn't wire up the system CA store, so the
+  token-exchange POST failed with `CERTIFICATE_VERIFY_FAILED` until
+  `sync/auth.py` was pointed at `certifi`'s bundle explicitly
+  (`ssl.create_default_context(cafile=certifi.where())`). Worth remembering
+  if this ever runs somewhere other than this machine.
+
+### API shape, confirmed live (not from docs -- the docs were incomplete)
+
+- The plain `list` endpoint returns an empty `dataPoints` array for
+  wearable data. Use `reconcile` with
+  `dataSourceFamily=users/me/dataSourceFamilies/google-wearables`, or
+  nothing comes back.
+- **Response shape differs by data type** and this isn't documented
+  anywhere obvious: accumulator types (`steps`, `distance`,
+  `active-energy-burned`) key their payload as `{interval: {startTime,
+  endTime, civilStartTime, civilEndTime}, <value>}`; instantaneous-sample
+  types (`heart-rate`) use `{sampleTime: {physicalTime, civilTime},
+  <value>}` instead. `sync/client.py`'s `_payload`/`_point_start` handle
+  both. A third shape (`sleep`) additionally prefixes the point with a
+  `dataPointName` string field before the payload dict -- broke a
+  "first value in the dict" shortcut; fixed by specifically skipping
+  non-dict values.
+- Google does the UTC→local conversion server-side: every point's
+  `civilStartTime`/`civilTime` already carries local year/month/day/hour/
+  minute. Simpler than the Takeout CSV parser, which had to do this by hand
+  (see `parsers/google_health.py`).
+- No server-side time-range filter is used (see `fetch_data_points`
+  docstring) -- the filter field name isn't consistent across the
+  interval/sample split above, and a wrong guess fails the whole request
+  rather than degrading. Time bounds are applied client-side after paging
+  back through `reconcile`'s newest-first results.
+- **Heart rate is high-volume**: ~2.6s cadence, confirmed ~99K points over
+  a 3-day test window. A 7-day pull timed out in testing. Any real sync job
+  needs to either request a short window (e.g. last 24-36h, run daily) or
+  downsample during fetch the same way `intraday.py` does for Takeout data
+  -- raw per-sample heart rate should not be the thing that lands in
+  storage long-term.
+- Verified working live: `steps`, `heart-rate`, `distance`,
+  `active-energy-burned`, `sleep` (`sync/client.py DATA_TYPES`). Everything
+  else from the docs' partial data-type list (HRV, SpO2, temperature,
+  resting HR, weight, height, VO2 max, readiness) is unconfirmed -- expand
+  the list only after testing each one live the same way, per the module
+  docstring's warning about silent wrong-identifier failures.
+
+### Not yet built
+
+- Actually calling `sync/client.py` from a `fitbit sync` CLI command and
+  writing results anywhere persistent (currently only exercised from a
+  Python shell during validation).
+- Heart-rate downsampling during fetch.
+- Incremental sync logic beyond "give it a start/end and it pages back
+  through reconcile" -- no cursor/watermark persistence yet.
+- The GitHub Actions scheduled workflow, and its "fail loudly on expired
+  refresh token" behavior.
+- Reconciling this data with the Takeout-sourced `gh_*` gold columns --
+  same open question as the two Takeout formats, now with a third source.
+
 ## The real export uses a different, newer layout than this pipeline was built for
 
 Fitbit's export is now branded **"Google Health"**, not "Fitbit", and ships
