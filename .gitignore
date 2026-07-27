@@ -1,0 +1,23 @@
+# Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# YOUR HEALTH DATA — never commit this.
+data/
+takeout/
+Takeout/
+*.zip
+reports/
+*.parquet
+*.duckdb
+
+# Local config that may contain paths to personal data
+config.local.yaml
+
+# OS
+.DS_Store

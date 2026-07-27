@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fitbit-analytics"
+version = "0.1.0"
+description = "A local ELT pipeline and analytics layer for Google Takeout Fitbit exports"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "duckdb>=0.10",
+    "plotly>=5.18",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "pyyaml>=6.0",
+    "pytz>=2023.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.3"]
+
+[project.scripts]
+fitbit = "fitbit_analytics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+# Blind excepts are deliberate in ingest.py and flags.py: one malformed
+# dataset or one broken rule must not sink the whole run.
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

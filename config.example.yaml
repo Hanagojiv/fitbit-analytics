@@ -1,0 +1,20 @@
+# Copy to config.local.yaml and edit. config.local.yaml is gitignored.
+
+# Path to the UNZIPPED Takeout directory. Point at the folder that
+# contains "Fitbit" (usually .../Takeout).
+takeout_root: "./Takeout"
+
+# Where the pipeline writes its layers.
+data_dir: "./data"
+
+# Your local timezone. Fitbit exports Global Export Data timestamps in
+# device-local time already; this is used for derived date bucketing only.
+timezone: "America/New_York"
+
+# Intraday files (heart rate, steps at minute granularity) are the bulk of
+# the export. They are downsampled to these grains and the raw rows dropped.
+intraday_grains: ["daily", "hourly"]
+
+# Cap on intraday files parsed per dataset. null = no cap.
+# Useful for a fast first pass on a multi-GB export.
+intraday_file_limit: null
