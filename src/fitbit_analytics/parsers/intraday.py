@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .common import load_datetime_value_files
+from .common import load_datetime_value_files, parse_timestamps, read_json_records
 
 # How each dataset collapses to a coarser grain.
 # "sum" for accumulating counters, richer stats for continuous signals.
@@ -139,3 +139,43 @@ def resting_hr_from_json(paths: Iterable[Path]) -> pd.DataFrame:
     # Fitbit writes 0.0 when it could not compute a value for the day.
     out.loc[out["resting_hr"] <= 0, "resting_hr"] = np.nan
     return out.dropna(subset=["resting_hr"]).drop_duplicates("date").sort_values("date")
+
+
+def vo2max_from_json(paths: Iterable[Path]) -> pd.DataFrame:
+    """demographic_vo2_max-*.json: nested {demographicVO2Max, ...} per day."""
+    df = load_datetime_value_files(paths, "vo2max")
+    if df.empty:
+        return pd.DataFrame()
+
+    out = pd.DataFrame({"date": df["ts"].dt.normalize()})
+    for src, dst in (
+        ("vo2max_demographicVO2Max", "vo2max"),
+        ("vo2max_filteredDemographicVO2Max", "vo2max_filtered"),
+    ):
+        if src in df.columns:
+            out[dst] = pd.to_numeric(df[src], errors="coerce")
+
+    return out.dropna(subset=["date"]).drop_duplicates("date").sort_values("date")
+
+
+def hr_zone_minutes_from_json(paths: Iterable[Path]) -> pd.DataFrame:
+    """time_in_heart_rate_zones-*.json: nested {valuesInZones: {zone: minutes}} per day."""
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        for rec in read_json_records(Path(path)):
+            date = rec.get("dateTime")
+            zones = ((rec.get("value") or {}).get("valuesInZones")) or {}
+            if date is None or not zones:
+                continue
+            row = {"date": date, **{f"hr_zone_{k.lower()}": v for k, v in zones.items()}}
+            frames.append(pd.DataFrame([row]))
+
+    if not frames:
+        return pd.DataFrame()
+
+    out = pd.concat(frames, ignore_index=True)
+    out["date"] = parse_timestamps(out["date"]).dt.normalize()
+    zone_cols = [c for c in out.columns if c != "date"]
+    for c in zone_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out.dropna(subset=["date"]).drop_duplicates("date").sort_values("date")

@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import Config
-from .parsers import csv_features, intraday, sleep
+from .parsers import csv_features, google_health, intraday, sleep
 
 INTRADAY_DATASETS = [
     "heart_rate", "steps", "calories", "distance", "altitude",
@@ -25,6 +25,10 @@ CSV_DAILY_DATASETS = [
     "hrv_daily", "respiratory_rate", "spo2_daily",
     "temperature_computed", "sleep_score", "stress_score", "readiness",
 ]
+
+# "Google Health" format datasets (see parsers/google_health.py). Grouped by
+# which of that module's three generic parsers handles them.
+GH_EVENT_DATASETS = ["gh_sleep_scores", "gh_personal_records"]
 
 
 def _paths(catalog: pd.DataFrame, dataset: str, limit: int | None = None) -> list[Path]:
@@ -63,6 +67,23 @@ def run(cfg: Config, catalog: pd.DataFrame | None = None) -> dict[str, int]:
         )
     except Exception:
         print("  resting_heart_rate FAILED")
+        traceback.print_exc(limit=2)
+
+    # --- old-format daily extras (nested JSON) --------------------------
+    try:
+        vo2max = intraday.vo2max_from_json(_paths(catalog, "demographic_vo2_max"))
+        counts["vo2max"] = _write(vo2max, cfg.silver / "vo2max.parquet", "vo2max")
+    except Exception:
+        print("  vo2max FAILED")
+        traceback.print_exc(limit=2)
+
+    try:
+        hr_zones = intraday.hr_zone_minutes_from_json(_paths(catalog, "hr_zone_minutes"))
+        counts["hr_zone_minutes"] = _write(
+            hr_zones, cfg.silver / "hr_zone_minutes.parquet", "hr_zone_minutes"
+        )
+    except Exception:
+        print("  hr_zone_minutes FAILED")
         traceback.print_exc(limit=2)
 
     # --- sleep sessions and daily rollup ------------------------------
@@ -129,6 +150,58 @@ def run(cfg: Config, catalog: pd.DataFrame | None = None) -> dict[str, int]:
             )
         except Exception:
             print("  azm FAILED")
+            traceback.print_exc(limit=2)
+
+    # --- "Google Health" format: minute-grain, downsampled --------------
+    for dataset in google_health.INTRADAY_SPECS:
+        paths = _paths(catalog, dataset, limit)
+        if not paths:
+            continue
+        try:
+            frames = google_health.parse_intraday(dataset, paths, cfg.intraday_grains, cfg.timezone)
+            for grain, df in frames.items():
+                name = f"{dataset}_{grain}"
+                counts[name] = _write(df, cfg.silver / f"{name}.parquet", name)
+        except Exception:
+            print(f"  {dataset} FAILED")
+            traceback.print_exc(limit=2)
+
+    # --- "Google Health" format: categorical, pivoted to minutes/day ----
+    for dataset in google_health.PIVOT_SPECS:
+        paths = _paths(catalog, dataset, limit)
+        if not paths:
+            continue
+        try:
+            frames = google_health.parse_pivot(dataset, paths, cfg.intraday_grains, cfg.timezone)
+            for grain, df in frames.items():
+                name = f"{dataset}_{grain}"
+                counts[name] = _write(df, cfg.silver / f"{name}.parquet", name)
+        except Exception:
+            print(f"  {dataset} FAILED")
+            traceback.print_exc(limit=2)
+
+    # --- "Google Health" format: already daily grain ---------------------
+    for dataset in google_health.DAILY_PASSTHROUGH_SPECS:
+        paths = _paths(catalog, dataset)
+        if not paths:
+            continue
+        try:
+            df = google_health.parse_daily_passthrough(dataset, paths, cfg.timezone)
+            counts[dataset] = _write(df, cfg.silver / f"{dataset}.parquet", dataset)
+        except Exception:
+            print(f"  {dataset} FAILED")
+            traceback.print_exc(limit=2)
+
+    # --- "Google Health" format: event-grain, silver-only for now -------
+    for dataset in GH_EVENT_DATASETS:
+        paths = _paths(catalog, dataset)
+        if not paths:
+            continue
+        try:
+            df = google_health.parse_event(dataset, paths)
+            counts[dataset] = _write(df, cfg.silver / f"{dataset}.parquet", dataset)
+        except Exception:
+            print(f"  {dataset} FAILED")
             traceback.print_exc(limit=2)
 
     total = sum(counts.values())

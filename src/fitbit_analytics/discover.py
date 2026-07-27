@@ -66,6 +66,64 @@ DATASET_SPECS: list[DatasetSpec] = [
     DatasetSpec("stress_score", _p(r"Stress Score\.csv$"), "csv", "daily"),
     DatasetSpec("readiness", _p(r"Daily Readiness Score.*\.csv$"), "csv", "daily"),
     DatasetSpec("azm", _p(r"Active Zone Minutes.*\.csv$"), "csv", "intraday"),
+
+    # --- old-format extras found in the real export, not the fixtures ----
+    DatasetSpec("demographic_vo2_max", _p(r"^demographic_vo2_max-\d{4}-\d{2}-\d{2}\.json$"),
+                "json", "daily", "nested {demographicVO2Max, ...}, one file per export run"),
+    DatasetSpec("hr_zone_minutes", _p(r"^time_in_heart_rate_zones-\d{4}-\d{2}-\d{2}\.json$"),
+                "json", "daily", "nested valuesInZones dict, minutes per zone per day"),
+
+    # --- "Google Health" format: Physical Activity_GoogleData -----------
+    # One file per dataset per day (or a single file for rarely-updated
+    # values), self-describing headers: timestamp, <value(s)>, data source.
+    # `data source` is the device/app that wrote the row -- the Fitbit Air
+    # identifies itself as "Radiance". See parsers/google_health.py.
+    DatasetSpec("gh_heart_rate", _p(r"^heart_rate_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_steps", _p(r"^steps_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_calories", _p(r"^calories_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_active_energy_burned",
+                _p(r"^active_energy_burned_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_distance", _p(r"^distance_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_body_temperature",
+                _p(r"^body_temperature_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_oxygen_saturation",
+                _p(r"^oxygen_saturation_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_speed", _p(r"^speed_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_cardio_load", _p(r"^cardio_load_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+
+    DatasetSpec("gh_activity_level", _p(r"^activity_level_\d{4}-\d{2}-\d{2}\.csv$"),
+                "csv", "intraday"),
+    DatasetSpec("gh_active_zone_minutes",
+                _p(r"^active_zone_minutes_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_calories_in_heart_rate_zone",
+                _p(r"^calories_in_heart_rate_zone_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+    DatasetSpec("gh_time_in_heart_rate_zone",
+                _p(r"^time_in_heart_rate_zone_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "intraday"),
+
+    DatasetSpec("gh_daily_heart_rate_variability",
+                _p(r"^daily_heart_rate_variability\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_heart_rate_variability",
+                _p(r"^heart_rate_variability_\d{4}-\d{2}-\d{2}\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_daily_oxygen_saturation",
+                _p(r"^daily_oxygen_saturation\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_daily_readiness", _p(r"^daily_readiness\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_daily_respiratory_rate",
+                _p(r"^daily_respiratory_rate\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_daily_resting_heart_rate",
+                _p(r"^daily_resting_heart_rate\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_daily_sleep_temperature_derivations",
+                _p(r"^daily_sleep_temperature_derivations\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_height", _p(r"^height\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_weight", _p(r"^weight\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_cardio_acute_chronic_workload_ratio",
+                _p(r"^cardio_acute_chronic_workload_ratio\.csv$"), "csv", "daily"),
+    DatasetSpec("gh_cardio_load_observed_interval",
+                _p(r"^cardio_load_observed_interval\.csv$"), "csv", "daily"),
+
+    # --- "Google Health" format: Health Fitness Data_GoogleData ---------
+    DatasetSpec("gh_sleep_scores", _p(r"^UserSleepScores_\d{4}-\d{2}-\d{2}\.csv$"),
+                "csv", "event", "richer than the old sleep_score.csv; not yet joined to gold"),
+    DatasetSpec("gh_personal_records", _p(r"^PersonalRecords\.csv$"), "csv", "event"),
 ]
 
 # Files we know about but have no analytical use for — excluded from the
@@ -78,6 +136,51 @@ IGNORE_PATTERNS = [
     _p(r"social.*\.json$"),
     _p(r"profile\.(json|csv)$"),
     _p(r"^\..*"),  # dotfiles
+    _p(r"readme.*\.txt$"),  # every export folder ships one
+
+    # "Biometrics/Glucose <YYYYMM>.csv" — Fitbit generates one placeholder
+    # per month for the account's entire lifetime regardless of whether the
+    # feature was ever used. Confirmed empty (0 bytes) against the real
+    # export; not a parser gap.
+    _p(r"^Glucose \d{6}\.csv$"),
+
+    # Menstrual Health — not applicable to this user, and not the kind of
+    # data this project should touch by default even if present.
+    _p(r"^menstrual_health_.*\.csv$"),
+
+    # GPS is real lat/lon/altitude. Not synced or parsed by default — see
+    # the Privacy section in README.md. Revisit only as an explicit,
+    # opt-in, per-activity feature.
+    _p(r"^gps_location_\d{4}-\d{2}-\d{2}\.csv$"),
+
+    # UserActivityProbabilities is ~45MB/day of sub-2-second activity
+    # classifier output — the same problem intraday.py already solves for
+    # heart rate/steps, just not solved for this source yet. Deferred
+    # rather than loaded raw; see CLAUDE.md "Immediate next step".
+    _p(r"^UserActivityProbabilities_\d{4}-\d{2}-\d{2}\.csv$"),
+
+    # Event/array-shaped new-format datasets: real signal, but each needs
+    # its own aggregation logic rather than the generic parser. Deferred,
+    # not dropped — see CLAUDE.md.
+    _p(r"^micro_motion_\d{4}-\d{2}-\d{2}\.csv$"),
+    _p(r"^micro_stillness_\d{4}-\d{2}-\d{2}\.csv$"),
+    _p(r"^live_pace_\d{4}-\d{2}-\d{2}\.csv$"),
+    _p(r"^swim_lengths_data_\d{4}-\d{2}-\d{2}\.(csv|json)$"),
+    _p(r"^sedentary_period_\d{4}-\d{2}-\d{2}\.csv$"),
+    _p(r"^respiratory_rate_sleep_summary_\d{4}-\d{2}-\d{2}\.csv$"),
+    _p(r"^daily_heart_rate_zones\.csv$"),  # shape unconfirmed, not a time series
+    _p(r"^estimated_oxygen_variation-\d{4}-\d{2}-\d{2}\.csv$"),  # raw sensor signal, not a metric
+    _p(r"^UserSleepStages_\d{4}-\d{2}-\d{2}\.csv$"),  # stage-transition events; sleep_scores is v1
+    _p(r"^UserExercises_\d{4}-\d{2}-\d{2}\.csv$"),  # exercise-*.json already deferred; same story
+    _p(r"^WorkoutSummariesAndRounds\.csv$"),  # sets/reps detail, low priority for v1
+
+    # Settings, account metadata, and internal app state — not health data.
+    _p(r"^(AppContentHistory|CalibrationStatusForReadinessAndLoad|"
+       r"LabsSurveyAnswerRecords|UserActivityRecognitionProcessingState|"
+       r"UserAppSettingData|UserDemographicData|UserDeviceLanguage|"
+       r"UserLegacySettingData|UserLocationCountry|UserMBDData|"
+       r"UserProfileData|UserSensorCompressionToken|GoalSettingsHistory)"
+       r"(_\d{4}-\d{2}-\d{2})?\.csv$"),
 ]
 
 
@@ -105,7 +208,7 @@ def build_catalog(cfg: Config) -> pd.DataFrame:
         raise FileNotFoundError(
             f"takeout_root does not exist: {root}\n"
             "Unzip your Takeout archive and point config.local.yaml at the folder "
-            "containing 'Fitbit'."
+            "containing 'Fitbit' or 'Google Health'."
         )
 
     rows = []

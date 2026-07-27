@@ -19,31 +19,41 @@ Repo: https://github.com/Hanagojiv/fitbit-analytics
 
 **Built and working:** a local ELT pipeline (discover → ingest → transform →
 report) over Google Takeout Fitbit exports, using DuckDB for the
-bronze/silver/gold layers and a self-contained HTML report. 15 tests passing
-against synthetic fixtures. See `src/fitbit_analytics/` and the architecture
+bronze/silver/gold layers and a self-contained HTML report. It has been run
+end to end against a real export, not just synthetic fixtures: `fitbit
+discover` classifies 293/1,082 real files against 47 `DatasetSpec`s, `fitbit
+ingest` produces 68 silver tables (14K rows), `fitbit transform` builds a
+60-day × 124-column `daily_facts` gold table, and `fitbit report` renders.
+13/15 fixture tests pass (2 pre-existing failures, unrelated to real-data
+work — see CLAUDE.md). See `src/fitbit_analytics/` and the architecture
 notes below — this part of the repo predates the cloud rebuild and still
 works standalone if you just want a local-only pipeline.
 
-**Just discovered, not yet handled:** the real Takeout export (267MB zipped,
-1.4GB unzipped) uses Fitbit's newer **"Google Health"** export format
-(post-Google-acquisition), not the older "Fitbit" layout the parsers above
-were built against. Running `fitbit discover` against it found:
+The real export uses Fitbit's newer **"Google Health"** format
+(post-Google-acquisition), which turned out to be genuinely richer than the
+old "Fitbit" layout the pipeline was originally built for — a parallel,
+higher-fidelity CSV tree (`Physical Activity_GoogleData/`,
+`Health Fitness Data_GoogleData/`) with ~25 additional per-minute datasets
+(cardio load, HRV, SpO2, temperature, daily readiness, weight, height, and
+more), each tagged with a `data source` device name ("Radiance" — the Fitbit
+Air's internal codename — vs. "Fitbit App"). Both formats are now parsed;
+`parsers/google_health.py` handles the new one generically since its headers
+are self-describing and consistent, unlike the old format's column drift.
 
-- The 20 dataset types already parsed (`Global Export Data/`) are present and
-  read correctly — heart rate, steps, sleep, HRV, SpO2, temperature, etc.
-- **789 files are unclassified**, almost entirely under a parallel,
-  higher-fidelity export tree (`Physical Activity_GoogleData/`,
-  `Health Fitness Data_GoogleData/`) with ~30 additional per-minute datasets:
-  cardio load, GPS location, micro-motion, swim lengths, daily readiness,
-  weight, height, and more, each tagged with a `data source` device name
-  ("Radiance" — the Fitbit Air's internal codename — vs. "Fitbit App").
-- One file, `UserActivityProbabilities`, is ~1.1GB on its own — a
-  sub-2-second-cadence activity-classifier stream that needs the same
-  aggregate-on-read treatment the old intraday heart rate/steps data already
-  gets, not raw storage.
-- `gps_location_*.csv` contains real lat/lon/altitude. This needs an explicit
-  privacy decision before anything cloud-hosted touches it — see **Privacy**
-  below.
+**Deliberately deferred, not silently dropped** (each is a commented
+`IGNORE_PATTERNS` entry in `discover.py`):
+
+- `gps_location` — real lat/lon/altitude; needs the privacy decision below
+  before any cloud sync touches it.
+- `UserActivityProbabilities` — ~45MB/day activity-classifier stream; needs
+  the same aggregate-on-read treatment intraday heart rate already gets, just
+  not built for this source yet.
+- A handful of event/array-shaped datasets (`micro_motion`, `live_pace`,
+  `UserSleepStages`, `UserExercises`, swim/workout detail) that need bespoke
+  aggregation rather than the generic parser.
+- ~230 empty `Biometrics/Glucose *.csv` placeholder files (confirmed 0
+  bytes), menstrual health data (not applicable), and account/settings
+  metadata.
 
 **Not yet built:** everything past the local pipeline — the Fitbit Web API
 sync, the Postgres warehouse, dbt models, scheduled orchestration, ML
@@ -57,7 +67,7 @@ behind it.
 
 | Layer | Choice | Status |
 |---|---|---|
-| Historical backfill | Google Takeout export (this repo's existing parser layer) | ⚠️ needs extending for the new export format |
+| Historical backfill | Google Takeout export (this repo's existing parser layer) | ✅ working, both export formats, run against real data |
 | Ongoing sync | Fitbit Web API (OAuth2, daily incremental) | ⬜ not started |
 | Warehouse | Supabase (managed Postgres) | ⬜ not started |
 | Transform | dbt-core models, bronze/silver/gold on Postgres | ⬜ not started |
@@ -162,7 +172,8 @@ src/fitbit_analytics/
 │   ├── common.py         timestamp conventions, the {dateTime,value} shape
 │   ├── intraday.py       minute-grain JSON + downsampling + wear coverage
 │   ├── sleep.py           sleep logs, stages, timing features
-│   └── csv_features.py   HRV, SpO2, sleep score, stress, readiness
+│   ├── csv_features.py   HRV, SpO2, sleep score, stress, readiness (old format)
+│   └── google_health.py  the newer per-source CSV format, generically
 └── analytics/
     ├── trends.py          baselines, RHR drift, regularity, robust anomalies
     ├── relationships.py   lagged correlations with FDR correction
@@ -173,13 +184,21 @@ Cloud-stack code (Fitbit API client, dbt project, predictions, dashboard) will
 land in new top-level directories as it's built; this section will be updated
 as that happens rather than left stale.
 
-Datasets currently recognised (old "Global Export Data" format only — the new
-`Physical Activity_GoogleData` / `Health Fitness Data_GoogleData` datasets
-are not yet parsed): steps, calories, distance, altitude, heart rate, resting
-heart rate, the four active-minute tiers, sleep, exercise, HRV (daily and
-detail), respiratory rate, SpO2 (daily and minute), skin and device
-temperature, sleep score, stress score, daily readiness, and Active Zone
-Minutes.
+Datasets recognised, old format (`Global Export Data/`): steps, calories,
+distance, altitude, heart rate, resting heart rate, the four active-minute
+tiers, sleep, exercise, HRV (daily and detail), respiratory rate, SpO2 (daily
+and minute), skin and device temperature, sleep score, stress score, daily
+readiness, Active Zone Minutes, VO2 max, and heart-rate-zone minutes.
+
+Datasets recognised, new format (`Physical Activity_GoogleData/` /
+`Health Fitness Data_GoogleData/`): heart rate, steps, calories, active
+energy, distance, body temperature, SpO2, speed, cardio load, activity level,
+active zone minutes, calories-in-zone, time-in-zone, HRV (daily and
+per-night), daily SpO2, daily readiness, daily respiratory rate, daily
+resting heart rate, sleep-temperature derivations, height, weight, cardio
+workload ratio, sleep scores, and personal records. New-format columns carry
+a `_gh` suffix in `daily_facts` to keep them distinguishable from the
+old-format equivalent until the two are reconciled (see CLAUDE.md).
 
 ---
 

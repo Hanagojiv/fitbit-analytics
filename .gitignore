@@ -9,6 +9,7 @@ __pycache__/
 
 # YOUR HEALTH DATA — never commit this.
 data/
+data_raw/
 takeout/
 Takeout/
 *.zip

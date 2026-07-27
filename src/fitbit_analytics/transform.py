@@ -36,6 +36,35 @@ DAILY_TABLES = [
     "stress_score",
     "readiness",
     "azm",
+    "vo2max",
+    "hr_zone_minutes",
+    # "Google Health" format (see parsers/google_health.py). "_gh" column
+    # suffixes mark these as the new-format equivalent of a metric that may
+    # already exist above from the old format; nothing here overwrites it.
+    "gh_heart_rate_daily",
+    "gh_steps_daily",
+    "gh_calories_daily",
+    "gh_active_energy_burned_daily",
+    "gh_distance_daily",
+    "gh_body_temperature_daily",
+    "gh_oxygen_saturation_daily",
+    "gh_speed_daily",
+    "gh_cardio_load_daily",
+    "gh_activity_level_daily",
+    "gh_active_zone_minutes_daily",
+    "gh_calories_in_heart_rate_zone_daily",
+    "gh_time_in_heart_rate_zone_daily",
+    "gh_daily_heart_rate_variability",
+    "gh_heart_rate_variability",
+    "gh_daily_oxygen_saturation",
+    "gh_daily_readiness",
+    "gh_daily_respiratory_rate",
+    "gh_daily_resting_heart_rate",
+    "gh_daily_sleep_temperature_derivations",
+    "gh_height",
+    "gh_weight",
+    "gh_cardio_acute_chronic_workload_ratio",
+    "gh_cardio_load_observed_interval",
 ]
 
 
@@ -76,11 +105,26 @@ def build_daily_facts(cfg: Config) -> pd.DataFrame:
         """
     )
 
+    # Column names are not guaranteed unique across tables -- as more
+    # datasets land here (old format + "Google Health" format + future
+    # sources), two tables producing the same column name is expected, not
+    # a bug. Keep the first table's column under its plain name and
+    # disambiguate every later collision with a table-name suffix, loudly,
+    # rather than letting DuckDB silently pick one.
     select_parts = ["spine.date"]
     join_parts = []
+    seen_columns: set[str] = set()
     for name, _ in tables:
         cols = [c for c in con.execute(f"DESCRIBE {name}").df()["column_name"] if c != "date"]
-        select_parts += [f"{name}.{c}" for c in cols]
+        for c in cols:
+            if c in seen_columns:
+                alias = f"{c}__{name}"
+                print(f"  note: column '{c}' in '{name}' collides; joined as '{alias}'")
+                select_parts.append(f"{name}.{c} AS {alias}")
+                seen_columns.add(alias)
+            else:
+                select_parts.append(f"{name}.{c}")
+                seen_columns.add(c)
         join_parts.append(f"LEFT JOIN {name} ON {name}.date = spine.date")
 
     sql = (
