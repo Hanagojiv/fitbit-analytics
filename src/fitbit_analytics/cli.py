@@ -6,6 +6,7 @@
     fitbit report       render the HTML report
     fitbit all          run the four in order
     fitbit sync-auth     one-time Google Health API OAuth authorization
+    fitbit warehouse-load  push silver/gold parquet into Postgres (Supabase)
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import discover, ingest, report, transform
+from . import discover, ingest, report, transform, warehouse
 from .config import load_config
 from .sync import auth as sync_auth
 
@@ -32,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     p_report.add_argument("-o", "--out", type=Path, default=None)
 
     sub.add_parser("sync-auth")
+    sub.add_parser("warehouse-load")
 
     args = parser.parse_args(argv)
 
@@ -41,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     cfg = load_config(args.config)
+
+    if args.command == "warehouse-load":
+        warehouse.run(cfg)
+        return 0
 
     if args.command == "discover":
         discover.run(cfg)

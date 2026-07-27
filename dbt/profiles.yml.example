@@ -1,0 +1,19 @@
+# Copy to profiles.yml (gitignored) in this same directory and run dbt with
+# `dbt run --profiles-dir .`, or export DBT_PROFILES_DIR to this path.
+#
+# Values come from environment variables rather than being pasted in
+# directly, same reasoning as secrets.local.yaml at the repo root: never
+# want a database password sitting in a file that's one `git add -A` away
+# from being committed.
+fitbit_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('SUPABASE_DB_HOST') }}"
+      user: "{{ env_var('SUPABASE_DB_USER', 'postgres') }}"
+      password: "{{ env_var('SUPABASE_DB_PASSWORD') }}"
+      port: "{{ env_var('SUPABASE_DB_PORT', '5432') | as_number }}"
+      dbname: "{{ env_var('SUPABASE_DB_NAME', 'postgres') }}"
+      schema: dbt
+      threads: 4

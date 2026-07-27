@@ -1,0 +1,56 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Silver-layer tables loaded as-is from the local pipeline's parquet
+      output by `fitbit warehouse-load` (see src/fitbit_analytics/warehouse.py).
+      One table per dataset, all daily grain, all keyed on `date` except
+      where noted. Full-refreshed on every load, not appended.
+    schema: raw
+    tables:
+      - name: sleep_daily
+      - name: resting_heart_rate
+      - name: heart_rate_daily
+      - name: steps_daily
+      - name: calories_daily
+      - name: distance_daily
+      - name: very_active_minutes_daily
+      - name: moderately_active_minutes_daily
+      - name: lightly_active_minutes_daily
+      - name: sedentary_minutes_daily
+      - name: wear_coverage
+      - name: hrv_daily
+      - name: respiratory_rate
+      - name: spo2_daily
+      - name: temperature_computed
+      - name: sleep_score
+      - name: stress_score
+      - name: readiness
+      - name: azm
+      - name: vo2max
+      - name: hr_zone_minutes
+      - name: gh_heart_rate_daily
+      - name: gh_steps_daily
+      - name: gh_calories_daily
+      - name: gh_active_energy_burned_daily
+      - name: gh_distance_daily
+      - name: gh_body_temperature_daily
+      - name: gh_oxygen_saturation_daily
+      - name: gh_speed_daily
+      - name: gh_cardio_load_daily
+      - name: gh_activity_level_daily
+      - name: gh_active_zone_minutes_daily
+      - name: gh_calories_in_heart_rate_zone_daily
+      - name: gh_time_in_heart_rate_zone_daily
+      - name: gh_daily_heart_rate_variability
+      - name: gh_heart_rate_variability
+      - name: gh_daily_oxygen_saturation
+      - name: gh_daily_readiness
+      - name: gh_daily_respiratory_rate
+      - name: gh_daily_resting_heart_rate
+      - name: gh_daily_sleep_temperature_derivations
+      - name: gh_height
+      - name: gh_weight
+      - name: gh_cardio_acute_chronic_workload_ratio
+      - name: gh_cardio_load_observed_interval

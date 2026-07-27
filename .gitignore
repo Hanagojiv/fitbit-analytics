@@ -24,5 +24,12 @@ config.local.yaml
 secrets.local.yaml
 .google_health_token.json
 
+# dbt: local profile has DB credentials (even though they're env var refs,
+# keep the actual file out); build artifacts are regenerated every run.
+dbt/profiles.yml
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
 # OS
 .DS_Store

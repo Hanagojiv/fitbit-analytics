@@ -17,6 +17,8 @@ dependencies = [
     "pyyaml>=6.0",
     "pytz>=2023.3",
     "certifi>=2024.0",
+    "psycopg[binary]>=3.1",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
