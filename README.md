@@ -6,9 +6,13 @@ dashboard — built the way a production pipeline would be, on a dataset of one.
 
 ```
 Takeout export ──┐
-                  ├──▶ ingest ──▶ warehouse (bronze/silver/gold) ──▶ predictions ──▶ dashboard
-Fitbit Web API ───┘                     ▲
-                              scheduled orchestration (GitHub Actions)
+                  ├──▶ ingest ──▶ local gold ──▶ warehouse-load ──▶ Postgres (Supabase)
+Google Health API ┘                                                      │
+                                                                          ▼
+                                                        dbt (staging + fct_daily_facts)
+                                                                          │
+                                              scheduled orchestration     ▼
+                                              (GitHub Actions, ⬜)   predictions ──▶ dashboard
 ```
 
 Repo: https://github.com/Hanagojiv/fitbit-analytics
@@ -55,11 +59,19 @@ are self-describing and consistent, unlike the old format's column drift.
   bytes), menstrual health data (not applicable), and account/settings
   metadata.
 
-**Not yet built:** everything past the local pipeline — the Fitbit Web API
-sync, the Postgres warehouse, dbt models, scheduled orchestration, ML
-predictions, and the dashboard. This README describes the target shape;
-treat anything below marked with a stage as aspirational until it has code
-behind it.
+**Also built and validated live** (2026-07-27, same session): the Google
+Health API sync client (`sync/`), the Postgres warehouse loader
+(`warehouse.py`), and the dbt project (`dbt/`) — see CLAUDE.md for the full
+list of real bugs found and fixed along the way (OAuth scope config, an SSL
+cert issue, undocumented API response-shape differences, a missing source
+table). `dbt_marts.fct_daily_facts` in Supabase was cross-checked row-for-row
+against the local `daily_facts.parquet` and matched exactly.
+
+**Not yet built:** scheduled orchestration (the sync → warehouse-load → dbt
+chain isn't wired into anything that runs on its own yet — currently all
+manual), ML predictions, and the dashboard. This README describes the target
+shape; treat anything below marked with a stage as aspirational until it has
+code behind it.
 
 ---
 
@@ -68,9 +80,9 @@ behind it.
 | Layer | Choice | Status |
 |---|---|---|
 | Historical backfill | Google Takeout export (this repo's existing parser layer) | ✅ working, both export formats, run against real data |
-| Ongoing sync | Fitbit Web API (OAuth2, daily incremental) | ⬜ not started |
-| Warehouse | Supabase (managed Postgres) | ⬜ not started |
-| Transform | dbt-core models, bronze/silver/gold on Postgres | ⬜ not started |
+| Ongoing sync | Google Health API (`health.googleapis.com`, replaces the decommissioned Fitbit Web API) | ✅ OAuth + client validated live; not yet scheduled |
+| Warehouse | Supabase (managed Postgres) | ✅ `fitbit warehouse-load` pushes silver+gold, live |
+| Transform | dbt-core: 44 staging models + `fct_daily_facts` mart | ✅ built, tested, validated against local output |
 | Orchestration | GitHub Actions scheduled workflows | ⬜ not started |
 | Predictions | scikit-learn / statsmodels, extending `analytics/` | ⬜ not started |
 | Dashboard | Next.js + Tailwind + Recharts/Nivo, deployed on Vercel | ⬜ not started |
@@ -168,21 +180,28 @@ src/fitbit_analytics/
 ├── transform.py         DuckDB join into gold/daily_facts
 ├── report.py             self-contained interactive HTML
 ├── cli.py                argparse entry point
+├── warehouse.py          pushes silver/gold parquet into Postgres (Supabase)
 ├── parsers/
 │   ├── common.py         timestamp conventions, the {dateTime,value} shape
 │   ├── intraday.py       minute-grain JSON + downsampling + wear coverage
 │   ├── sleep.py           sleep logs, stages, timing features
 │   ├── csv_features.py   HRV, SpO2, sleep score, stress, readiness (old format)
 │   └── google_health.py  the newer per-source CSV format, generically
-└── analytics/
-    ├── trends.py          baselines, RHR drift, regularity, robust anomalies
-    ├── relationships.py   lagged correlations with FDR correction
-    └── flags.py           rule-based observations
+├── analytics/
+│   ├── trends.py          baselines, RHR drift, regularity, robust anomalies
+│   ├── relationships.py   lagged correlations with FDR correction
+│   └── flags.py           rule-based observations
+└── sync/                 Google Health API: OAuth (auth.py) + client (client.py)
+
+dbt/                      warehouse-side transforms — see dbt/README.md
+├── models/staging/       44 thin passthroughs over raw.* (loaded by warehouse.py)
+├── models/marts/         fct_daily_facts.sql — the real transform
+└── macros/daily_facts.sql  dynamic collision-safe join, mirrors transform.py
 ```
 
-Cloud-stack code (Fitbit API client, dbt project, predictions, dashboard) will
-land in new top-level directories as it's built; this section will be updated
-as that happens rather than left stale.
+Predictions and dashboard code will land in new top-level directories as
+they're built; this section will be updated as that happens rather than left
+stale.
 
 Datasets recognised, old format (`Global Export Data/`): steps, calories,
 distance, altitude, heart rate, resting heart rate, the four active-minute
