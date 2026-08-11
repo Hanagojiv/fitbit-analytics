@@ -6,10 +6,15 @@ aren't obvious from the docs:
 * The plain ``list`` endpoint returns nothing useful on its own. Wearable
   data needs ``reconcile`` scoped to the wearables data source family, or
   the response comes back with a ``nextPageToken`` and no ``dataPoints``.
-* Every point's ``interval`` already carries ``civilStartTime`` /
-  ``civilEndTime`` broken into local year/month/day/hour/minute -- Google
-  does the UTC-to-local conversion server-side, unlike the Takeout export
-  where that had to be done by hand (see parsers/google_health.py).
+* Most interval-shaped points carry ``civilStartTime``/``civilEndTime``
+  broken into local year/month/day/hour/minute -- Google does the
+  UTC-to-local conversion server-side, unlike the Takeout export where
+  that had to be done by hand (see parsers/google_health.py). Not all,
+  though: confirmed live that ``sleep``'s interval has only
+  ``startTime``/``startUtcOffset`` (raw UTC + a "-14400s"-style offset),
+  no civil breakdown at all. ``_local_date_from_offset`` below is the
+  fallback for that case, applied whenever civilStartTime is absent
+  rather than assumed present.
 
 Only a handful of data types are wired up so far -- the ones verified live.
 Expanding this list is mostly a matter of confirming each dataType string
@@ -24,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 
 import certifi
 import pandas as pd
@@ -117,6 +123,26 @@ def _date_str(date: dict) -> str | None:
     return f"{date.get('year')}-{date.get('month', 0):02d}-{date.get('day', 0):02d}"
 
 
+def _local_date_from_offset(utc_iso: str | None, utc_offset: str | None) -> str | None:
+    """Fallback for interval shapes with no civilStartTime -- confirmed live
+    that ``sleep`` is one: its interval has startTime/startUtcOffset only, no
+    civil breakdown at all. utc_offset looks like "-14400s" (signed seconds)."""
+    if not utc_iso:
+        return None
+    try:
+        instant = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    offset_seconds = 0
+    if utc_offset and utc_offset.endswith("s"):
+        try:
+            offset_seconds = int(utc_offset[:-1])
+        except ValueError:
+            offset_seconds = 0
+    local = instant + timedelta(seconds=offset_seconds)
+    return local.strftime("%Y-%m-%d")
+
+
 def to_dataframe(points: list[dict], data_type: str) -> pd.DataFrame:
     """Flatten the nested {dataType: {interval|sampleTime, <value>}} shape to a tidy frame."""
     rows = []
@@ -126,10 +152,15 @@ def to_dataframe(points: list[dict], data_type: str) -> pd.DataFrame:
         sample = payload.get("sampleTime")
 
         if interval:
+            local_date = _date_str((interval.get("civilStartTime") or {}).get("date"))
+            if local_date is None:
+                local_date = _local_date_from_offset(
+                    interval.get("startTime"), interval.get("startUtcOffset")
+                )
             row = {
                 "start_time_utc": interval.get("startTime"),
                 "end_time_utc": interval.get("endTime"),
-                "local_date": _date_str((interval.get("civilStartTime") or {}).get("date")),
+                "local_date": local_date,
             }
             extra = {k: v for k, v in payload.items() if k != "interval"}
         elif sample:

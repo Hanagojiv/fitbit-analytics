@@ -15,6 +15,7 @@ accumulate stale rows in Postgres that a fresh run should have superseded.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -24,12 +25,21 @@ import yaml
 from .config import Config
 
 DEFAULT_SECRETS_PATH = Path("secrets.local.yaml")
+_ENV_PG_URL = "SUPABASE_CONNECTION_STRING"
 
 
 def load_pg_url(path: Path = DEFAULT_SECRETS_PATH) -> str:
+    """CI (env var) first, local secrets.local.yaml second -- same pattern as
+    sync/auth.py's get_access_token, so GitHub Actions never needs a local
+    secrets file at all."""
+    env_url = os.environ.get(_ENV_PG_URL)
+    if env_url:
+        return env_url
+
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found. Add a `postgres:` block with `connection_string`."
+            f"{path} not found and {_ENV_PG_URL} not set. Add a `postgres:` "
+            "block with `connection_string`, or set the env var."
         )
     raw = yaml.safe_load(path.read_text()) or {}
     pg = raw.get("postgres")

@@ -13,9 +13,11 @@ any sync code needs.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -185,8 +187,21 @@ def _refresh(client: OAuthClient, refresh_token: str) -> dict:
 def _post_token(data: bytes) -> dict:
     req = urllib.request.Request(TOKEN_ENDPOINT, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, context=_SSL_CONTEXT) as resp:  # noqa: S310 -- fixed endpoint
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, context=_SSL_CONTEXT) as resp:  # noqa: S310
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        if "invalid_grant" in body:
+            # The expected weekly failure mode for a Testing-status OAuth
+            # app (7-day refresh token, see CLAUDE.md) -- make the fix
+            # obvious instead of surfacing a bare HTTP 400 traceback.
+            raise RuntimeError(
+                "Refresh token expired or revoked (invalid_grant) -- this is "
+                "the normal 7-day Testing-mode limit, not a bug. Run "
+                "`fitbit sync-auth` to re-authorize."
+            ) from e
+        raise RuntimeError(f"Token endpoint returned {e.code}: {body[:300]}") from e
 
 
 def _save_tokens(path: Path, tokens: dict) -> None:
@@ -195,11 +210,41 @@ def _save_tokens(path: Path, tokens: dict) -> None:
     path.write_text(json.dumps(cached, indent=2))
 
 
+_ENV_CLIENT_ID = "GOOGLE_HEALTH_CLIENT_ID"
+_ENV_CLIENT_SECRET = "GOOGLE_HEALTH_CLIENT_SECRET"
+_ENV_REFRESH_TOKEN = "GOOGLE_HEALTH_REFRESH_TOKEN"
+
+
 def get_access_token(
     secrets_path: Path = DEFAULT_SECRETS_PATH,
     token_cache_path: Path = DEFAULT_TOKEN_CACHE_PATH,
 ) -> str:
-    """Return a valid access token, refreshing silently if the cached one expired."""
+    """Return a valid access token, refreshing silently if the cached one expired.
+
+    Two paths, tried in this order:
+
+    1. CI / env-var: if GOOGLE_HEALTH_CLIENT_ID/SECRET/REFRESH_TOKEN are all
+       set, refresh directly from those -- no local files needed at all.
+       This is the GitHub Actions path; it never touches disk, so there's
+       nothing to gitignore and nothing that survives between runner
+       instances by accident.
+    2. Local dev: the token cache file written by `fitbit sync-auth`,
+       refreshed in place when it's within 60s of expiring.
+
+    Both paths raise on a refresh failure rather than swallowing it -- an
+    expired 7-day Testing-mode refresh token (see CLAUDE.md) must fail the
+    calling job loudly, not silently skip a sync.
+    """
+    if os.environ.get(_ENV_CLIENT_ID) and os.environ.get(_ENV_REFRESH_TOKEN):
+        client = OAuthClient(
+            client_id=os.environ[_ENV_CLIENT_ID],
+            client_secret=os.environ.get(_ENV_CLIENT_SECRET, ""),
+            redirect_uri="",  # unused for a refresh-token grant
+            scopes=[],
+        )
+        refreshed = _refresh(client, os.environ[_ENV_REFRESH_TOKEN])
+        return refreshed["access_token"]
+
     if not token_cache_path.exists():
         raise FileNotFoundError(
             f"No token cache at {token_cache_path}. Run `fitbit sync-auth` first."

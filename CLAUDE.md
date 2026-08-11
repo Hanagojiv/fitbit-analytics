@@ -109,18 +109,10 @@ live against the real account this session.
   the list only after testing each one live the same way, per the module
   docstring's warning about silent wrong-identifier failures.
 
-### Not yet built
-
-- Actually calling `sync/client.py` from a `fitbit sync` CLI command and
-  writing results anywhere persistent (currently only exercised from a
-  Python shell during validation).
-- Heart-rate downsampling during fetch.
-- Incremental sync logic beyond "give it a start/end and it pages back
-  through reconcile" -- no cursor/watermark persistence yet.
-- The GitHub Actions scheduled workflow, and its "fail loudly on expired
-  refresh token" behavior.
-- Reconciling this data with the Takeout-sourced `gh_*` gold columns --
-  same open question as the two Takeout formats, now with a third source.
+`fitbit sync`, heart-rate downsampling, watermark persistence, and the
+fail-loudly behavior are all built now -- see "Orchestrated sync pipeline"
+further down for what that actually looked like live. Only the GitHub
+Actions schedule itself remains from this section's original list.
 
 ## Postgres warehouse + dbt (Supabase)
 
@@ -158,6 +150,59 @@ without good IPv6, e.g. GitHub Actions runners, untested there yet).
   `export SSL_CERT_FILE=$(python3 -c "import certifi; print(certifi.where())")`.
   (Only works once certifi is already installed somewhere `python3` can
   import it from -- chicken-and-egg on a completely fresh environment.)
+- **The Supabase direct-connection host stopped resolving.**
+  `db.emmobuzexhpzntbkvags.supabase.co` worked when the warehouse/dbt work
+  above was built and validated, then came back `NXDOMAIN` days later with
+  no config change on this end. Switched to the **session pooler**
+  (`aws-0-us-east-2.pooler.supabase.com:5432`) instead, which is what
+  Supabase actually recommends for external tools -- the direct host was
+  the wrong default to reach for originally, not just a fallback for when
+  it breaks. `secrets.local.yaml`'s `postgres.connection_string` reflects
+  this now.
+
+## Orchestrated sync pipeline (`sync/pipeline.py`)
+
+Built, live-tested, and this is the piece of the whole project that most
+directly validated the "fail loudly on an expired refresh token" design
+decision -- not hypothetically, it actually happened: the token from the
+warehouse/dbt session had expired (14 days old, 7-day limit) when `fitbit
+sync` was first run here, and it failed with a raw `HTTP 400`. That surfaced
+a real gap -- the failure wasn't actually *loud* in a useful sense, just an
+ugly traceback -- so `sync/auth.py`'s `_post_token` now detects
+`invalid_grant` specifically and raises a message that says what to do
+(`fitbit sync-auth`) instead of a bare HTTP error. Re-ran `sync-auth`, then
+`fitbit sync` succeeded.
+
+- `fitbit sync` fetches steps/distance/active-energy-burned/heart-rate/sleep
+  since each data type's watermark (stored in `meta.sync_watermark` in
+  Postgres, not a local file -- survives ephemeral CI runners), downsamples
+  heart-rate to daily stats during fetch (never persists raw), and
+  **appends/dedups** into `data/silver/sync_*.parquet` rather than
+  overwriting -- this is the one part of the pipeline that isn't
+  full-refresh, since the API only ever returns what's new. See the
+  module docstring for why that's a deliberate deviation.
+- Output lands in `sync_*`-prefixed silver tables, separate from `gh_*`
+  (Takeout new-format) and the plain old-format ones -- a third source for
+  the same reconciliation decision already deferred twice. Not wired into
+  `transform.DAILY_TABLES` or the dbt staging layer yet for that reason.
+  `fitbit warehouse-load` does pick them up automatically though, since it
+  just globs `data/silver/*.parquet`.
+- **Found live, not guessed**: `sleep`'s `interval` has no `civilStartTime`
+  at all (unlike steps/distance/heart-rate/etc, which do) -- just
+  `startTime` + `startUtcOffset` ("-14400s"-style signed seconds). First
+  sync run produced `sync_sleep_sessions` with `local_date` entirely null.
+  Fixed with `_local_date_from_offset` in `client.py`, applied whenever
+  `civilStartTime` is absent rather than assumed present. Worth checking
+  for the same gap before trusting `local_date` on any new data type added
+  to `DATA_TYPES`.
+- CI-friendly auth: `get_access_token()` and `warehouse.load_pg_url()` both
+  check env vars first (`GOOGLE_HEALTH_CLIENT_ID/SECRET/REFRESH_TOKEN`,
+  `SUPABASE_CONNECTION_STRING`) before falling back to local files, so
+  GitHub Actions never needs `secrets.local.yaml` on the runner at all.
+
+### Not yet built
+- The GitHub Actions workflow itself (schedule + secrets wiring).
+- Predictions (task #7) and the dashboard (task #8) still don't exist.
 
 ## The real export uses a different, newer layout than this pipeline was built for
 
