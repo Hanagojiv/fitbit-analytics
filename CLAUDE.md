@@ -200,8 +200,42 @@ ugly traceback -- so `sync/auth.py`'s `_post_token` now detects
   `SUPABASE_CONNECTION_STRING`) before falling back to local files, so
   GitHub Actions never needs `secrets.local.yaml` on the runner at all.
 
+### Orchestration: `.github/workflows/sync.yml`
+
+Built and validated before it ever ran on real GitHub infrastructure: cloned
+the repo fresh into a scratch dir (no `data/`, no `secrets.local.yaml`,
+nothing gitignored) and ran the exact `sync` -> `warehouse-load` -> `dbt
+run`/`test` chain there with only env vars set, catching two real bugs
+first --
+
+- Neither `sync/pipeline.py` nor `warehouse.py` called `cfg.ensure_dirs()`,
+  which worked on this machine (the directory already existed from earlier
+  runs) but would have crashed instantly on an actual fresh CI checkout.
+  Fixed before the workflow file was even written.
+- dbt needs separate host/user/password fields, not the single URI Python
+  uses. Deriving those from `SUPABASE_CONNECTION_STRING` inside the
+  workflow would re-encode the password, and GitHub's log masking only
+  matches the *literal* registered secret string -- a re-encoded
+  derivative wouldn't be masked if it ever leaked into a log. Used a
+  second, independent `SUPABASE_DB_PASSWORD` secret (raw, unencoded) for
+  dbt instead of deriving it, so masking stays correct by construction
+  rather than by hoping nothing logs the connection string.
+
+5 repo secrets, set via `gh secret set` (piped through stdin, never a CLI
+argument): `GOOGLE_HEALTH_CLIENT_ID`, `GOOGLE_HEALTH_CLIENT_SECRET`,
+`GOOGLE_HEALTH_REFRESH_TOKEN`, `SUPABASE_CONNECTION_STRING`,
+`SUPABASE_DB_PASSWORD`. Host/user for dbt are hardcoded plain values in the
+workflow (not sensitive -- visible in the Supabase dashboard URL anyway).
+
+Runs daily at 12:00 UTC, plus `workflow_dispatch` for manual triggering.
+Deliberately nothing catches the `invalid_grant` error from an expired
+refresh token (see "Live sync" above) -- the run goes red, GitHub's own
+failure notification is the alert. When that happens (expected roughly
+weekly): run `fitbit sync-auth` locally, then
+`gh secret set GOOGLE_HEALTH_REFRESH_TOKEN --repo Hanagojiv/fitbit-analytics`
+with the new token from `.google_health_token.json`.
+
 ### Not yet built
-- The GitHub Actions workflow itself (schedule + secrets wiring).
 - Predictions (task #7) and the dashboard (task #8) still don't exist.
 
 ## The real export uses a different, newer layout than this pipeline was built for

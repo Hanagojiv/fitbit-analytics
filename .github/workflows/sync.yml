@@ -1,0 +1,64 @@
+name: Sync and transform
+
+# Daily incremental pull from the Google Health API -> Postgres (Supabase)
+# -> dbt. Validated locally first by simulating a fresh checkout (no
+# data/, no secrets.local.yaml, env vars only) before this file existed --
+# see CLAUDE.md "Orchestrated sync pipeline".
+#
+# Fails loudly, on purpose, when the refresh token has hit its 7-day
+# Testing-mode expiry (see CLAUDE.md "Live sync"): sync/auth.py raises a
+# clear "run fitbit sync-auth" error rather than a bare HTTP 400, and nothing
+# here catches it, so the run shows red and GitHub's own failure
+# notification is the alert. Re-run `fitbit sync-auth` locally and update
+# the GOOGLE_HEALTH_REFRESH_TOKEN secret when that happens -- expected to
+# happen roughly weekly until this is worth Google's verification review.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # daily, 12:00 UTC
+  workflow_dispatch: {} # manual trigger, for testing this workflow itself
+
+env:
+  GOOGLE_HEALTH_CLIENT_ID: ${{ secrets.GOOGLE_HEALTH_CLIENT_ID }}
+  GOOGLE_HEALTH_CLIENT_SECRET: ${{ secrets.GOOGLE_HEALTH_CLIENT_SECRET }}
+  GOOGLE_HEALTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_HEALTH_REFRESH_TOKEN }}
+  SUPABASE_CONNECTION_STRING: ${{ secrets.SUPABASE_CONNECTION_STRING }}
+
+jobs:
+  sync-and-transform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install fitbit-analytics
+        run: pip install -e .
+
+      - name: Sync from the Google Health API
+        run: fitbit sync
+
+      - name: Load warehouse (silver + gold parquet -> Postgres)
+        run: fitbit warehouse-load
+
+      - name: Install dbt
+        run: pip install "dbt-postgres>=1.8"
+
+      - name: dbt run + test
+        working-directory: dbt
+        env:
+          # Host/user aren't sensitive (visible in the Supabase dashboard
+          # URL itself); only the password is a secret, and it's a
+          # separate one from SUPABASE_CONNECTION_STRING above rather than
+          # parsed out of it -- deriving it here would re-encode the
+          # password and GitHub's log masking only matches the literal
+          # registered secret string, not a re-encoded derivative.
+          SUPABASE_DB_HOST: aws-0-us-east-2.pooler.supabase.com
+          SUPABASE_DB_USER: postgres.emmobuzexhpzntbkvags
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          cp profiles.yml.example profiles.yml
+          dbt run --profiles-dir .
+          dbt test --profiles-dir .
