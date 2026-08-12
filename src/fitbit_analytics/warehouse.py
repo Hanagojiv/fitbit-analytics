@@ -63,6 +63,7 @@ def _with_psycopg_dialect(pg_url: str) -> str:
 
 
 def load_raw(cfg: Config, pg_url: str) -> dict[str, int]:
+    cfg.ensure_dirs()  # glob() on a missing dir silently yields nothing, not an error
     engine = sqlalchemy.create_engine(_with_psycopg_dialect(pg_url))
     counts: dict[str, int] = {}
 

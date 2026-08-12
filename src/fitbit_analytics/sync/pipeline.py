@@ -153,6 +153,7 @@ def _merge_and_write(path, new_df: pd.DataFrame, dedup_col: str) -> int:
 def run(cfg) -> dict[str, int]:
     from .. import warehouse  # local import: avoid a hard dependency for pure-fetch use
 
+    cfg.ensure_dirs()  # data/silver/ won't exist yet on a fresh checkout (e.g. CI)
     engine = sqlalchemy.create_engine(warehouse._with_psycopg_dialect(warehouse.load_pg_url()))
     _ensure_watermark_table(engine)
 
